@@ -48,6 +48,15 @@ jobs:
         run: nix-shell shell.nix --run 'BB_IN_NIX_SHELL=1 bash build.sh'
       - name: Native tests
         run: nix-shell shell.nix --run 'BB_IN_NIX_SHELL=1 bash build.sh --test'
+      - uses: actions/checkout@v4
+        with:
+          repository: NVIDIA/DLSS
+          ref: ${{ env.DLSS_SDK_TAG }}
+          path: dlss-sdk
+          lfs: true
+      # libsacredfire_dlss.so and NVIDIA's Linux runtime next to out/sacredfire (into the AppImage).
+      - name: DLSS bridge
+        run: nix-shell shell.nix --run 'bash dlss_bridge/build.sh "$PWD/dlss-sdk" --install'
       - name: AppImage
         # Builds that are not a tag are test packages: their version is the commit.
         run: |

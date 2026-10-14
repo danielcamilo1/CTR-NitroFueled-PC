@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2026 IFreemz
 // SPDX-License-Identifier: GPL-2.0-or-later
 // SacredFire: from IFreemz/shadPS4-Bloodborne-DLSS-FSR (vk_dlss_ngx); logging to stdout (the
-// port's log), one process-wide instance.
+// port's log), one process-wide instance. sacredfire: Linux loads libsacredfire_dlss.so (the same
+// bridge built against the SDK's Linux library) with NVIDIA's libnvidia-ngx-dlss.so.<version>.
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <mutex>
 #include <optional>
@@ -14,19 +16,30 @@
 
 #include "video_core/renderer_vulkan/vk_dlss_ngx.h"
 
+#if defined(_WIN32) || defined(__linux__)
+#define BB_DLSS_SUPPORTED 1
+#endif
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#elif defined(__linux__)
+#include <dlfcn.h>
+#endif
+#ifdef BB_DLSS_SUPPORTED
 #include "../../../../dlss_bridge/shadps4_dlss_bridge.h"
 #endif
 
 namespace Vulkan {
 
 namespace {
-constexpr wchar_t BridgeName[] = L"sacredfire_dlss.dll";
-constexpr wchar_t NgxName[] = L"nvngx_dlss.dll";
+#ifdef _WIN32
+constexpr char BridgeName[] = "sacredfire_dlss.dll";
+#else
+constexpr char BridgeName[] = "libsacredfire_dlss.so";
+#endif
 
 std::filesystem::path ExecutableDirectory() {
 #ifdef _WIN32
@@ -35,9 +48,59 @@ std::filesystem::path ExecutableDirectory() {
     path.resize(length);
     return std::filesystem::path{path}.parent_path();
 #else
-    return std::filesystem::current_path();
+    // sacredfire: the game binary's folder (bin/ in the AppImage, out/ in a build), not the
+    // working directory.
+    std::error_code ec;
+    const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return ec ? std::filesystem::current_path() : exe.parent_path();
 #endif
 }
+
+#ifdef BB_DLSS_SUPPORTED
+/// NVIDIA's DLSS runtime next to the bridge: nvngx_dlss.dll, or on Linux the SDK's
+/// libnvidia-ngx-dlss.so.<version> (NGX finds it through the bridge's path list).
+bool HasNgxRuntime(const std::filesystem::path& directory) {
+    std::error_code ec;
+#ifdef _WIN32
+    return std::filesystem::is_regular_file(directory / "nvngx_dlss.dll", ec);
+#else
+    for (const auto& entry : std::filesystem::directory_iterator(directory, ec)) {
+        if (entry.path().filename().string().starts_with("libnvidia-ngx-dlss.so.")) {
+            return true;
+        }
+    }
+    return false;
+#endif
+}
+
+void* OpenLibrary(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return LoadLibraryW(path.c_str());
+#else
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+#endif
+}
+
+void* LibrarySymbol(void* module, const char* name) {
+#ifdef _WIN32
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(module), name));
+#else
+    return dlsym(module, name);
+#endif
+}
+
+/// NGX's writable data directory: next to the executable on Windows (the portable folder); on
+/// Linux the user directory run.sh names (the AppImage's own folder is read-only).
+std::filesystem::path DataDirectory(const std::filesystem::path& executable_directory) {
+#ifdef _WIN32
+    return executable_directory / "dlss";
+#else
+    const char* user = std::getenv("BB_GPU_USER_DIR");
+    return user && *user ? std::filesystem::path{user} / "dlss"
+                         : std::filesystem::temp_directory_path() / "sacredfire-dlss";
+#endif
+}
+#endif
 } // namespace
 
 int DlssNgx::QualityForScale(float scale) {
@@ -45,7 +108,7 @@ int DlssNgx::QualityForScale(float scale) {
     return scale >= 2.9f ? 4 : scale >= 1.95f ? 3 : scale >= 1.65f ? 2 : scale > 1.01f ? 1 : 0;
 }
 
-#ifdef _WIN32
+#ifdef BB_DLSS_SUPPORTED
 
 namespace {
 void BridgeLog(int warning, const char* message) {
@@ -80,7 +143,7 @@ std::vector<const char*> Collect(const VkExtensionProperties* required, u32 coun
 } // namespace
 
 struct DlssNgx::Impl {
-    HMODULE module{};
+    void* module{};
     const ShadDlssApi* api{};
     std::vector<std::string> instance_extensions, device_extensions;
     std::optional<FeatureDesc> feature;
@@ -97,21 +160,34 @@ struct DlssNgx::Impl {
 
 DlssNgx::DlssNgx() : impl{std::make_unique<Impl>()} {
     const auto directory = ExecutableDirectory();
-    impl->module = LoadLibraryW((directory / BridgeName).c_str());
+    impl->module = OpenLibrary(directory / BridgeName);
+#ifndef _WIN32
+    if (!impl->module) {
+        std::printf("DLSS: %s\n", dlerror());
+    }
+#endif
     const auto get_api =
         impl->module
-            ? reinterpret_cast<ShadDlssGetApiFn>(GetProcAddress(impl->module, "ShadDlssGetApi"))
+            ? reinterpret_cast<ShadDlssGetApiFn>(LibrarySymbol(impl->module, "ShadDlssGetApi"))
             : nullptr;
     impl->api = get_api ? get_api() : nullptr;
     if (!impl->api || impl->api->abi != SHADPS4_DLSS_BRIDGE_ABI) {
         impl->api = nullptr;
-        impl->Disable("sacredfire_dlss.dll is missing or from another version");
+        impl->Disable(std::string{BridgeName} + " is missing or from another version");
         return;
     }
-    const auto data = directory / "dlss";
+    const auto data = DataDirectory(directory);
     std::error_code error;
     std::filesystem::create_directories(data, error);
-    if (!impl->api->Configure(directory.c_str(), data.c_str(), BridgeLog)) {
+    // The bridge takes wide paths on both systems (NGX's own API does).
+    std::wstring dll_directory, data_directory;
+    try {
+        dll_directory = directory.wstring();
+        data_directory = data.wstring();
+    } catch (const std::exception&) {
+        return impl->Disable("a folder path could not be converted for NGX");
+    }
+    if (!impl->api->Configure(dll_directory.c_str(), data_directory.c_str(), BridgeLog)) {
         impl->Disable("the bridge could not be configured");
     }
 }
@@ -127,7 +203,7 @@ DlssNgx* DlssNgx::Get() {
         const auto directory = ExecutableDirectory();
         std::error_code ec;
         if (!std::filesystem::is_regular_file(directory / BridgeName, ec) ||
-            !std::filesystem::is_regular_file(directory / NgxName, ec)) {
+            !HasNgxRuntime(directory)) {
             return;
         }
         instance = new DlssNgx; // lives until the process ends; Shutdown() releases NGX
@@ -279,7 +355,7 @@ void DlssNgx::Shutdown() {
 #else
 
 struct DlssNgx::Impl {
-    std::string problem{"DLSS is Windows only"};
+    std::string problem{"DLSS needs Windows or Linux"};
 };
 DlssNgx::DlssNgx() = default;
 DlssNgx::~DlssNgx() = default;

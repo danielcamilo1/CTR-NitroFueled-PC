@@ -250,6 +250,13 @@ const ShadDlssApi api{SHADPS4_DLSS_BRIDGE_ABI,
 
 } // namespace
 
-extern "C" __declspec(dllexport) const ShadDlssApi* ShadDlssGetApi() {
+// sacredfire: also built on Linux (build.sh, libsacredfire_dlss.so).
+#ifdef _WIN32
+#define SHAD_DLSS_EXPORT __declspec(dllexport)
+#else
+#define SHAD_DLSS_EXPORT __attribute__((visibility("default")))
+#endif
+
+extern "C" SHAD_DLSS_EXPORT const ShadDlssApi* ShadDlssGetApi() {
     return &api;
 }

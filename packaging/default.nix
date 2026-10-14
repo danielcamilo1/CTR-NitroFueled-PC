@@ -22,7 +22,10 @@ let
     filter = path: type:
       let rel = lib.removePrefix (toString root + "/") (toString path);
       in builtins.elem rel wanted
-        || lib.any (dir: lib.hasPrefix (dir + "/") rel) assetDirs;
+        || lib.any (dir: lib.hasPrefix (dir + "/") rel) assetDirs
+        # Optional DLSS (dlss_bridge/build.sh --install): the bridge, NVIDIA's runtime, licenses.
+        || lib.any (prefix: lib.hasPrefix prefix rel)
+             [ "out/libsacredfire_dlss.so" "out/libnvidia-ngx-dlss.so." "out/licenses" ];
   };
   python = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
   # Mesa's Vulkan drivers come with the package (RADV and ANV); bbport_vulkan.py adds the host
@@ -134,6 +137,12 @@ pkgs.stdenv.mkDerivation {
     install -m755 out/sacredfire $d/bin/sacredfire
     install -m755 out/bb-gpu-capabilities $d/bin/bb-gpu-capabilities
     install -Dm755 out/gpu/libbbgpu.so $d/bin/gpu/libbbgpu.so
+    # DLSS (optional, NVIDIA RTX): the bridge next to the game binary loads NVIDIA's runtime from
+    # there (vk_dlss_ngx.cpp); NVIDIA's DLSS SDK license allows redistributing the runtime.
+    if [ -f out/libsacredfire_dlss.so ]; then
+      install -m755 out/libsacredfire_dlss.so out/libnvidia-ngx-dlss.so.* $d/bin/
+      mkdir -p $d/licenses && cp out/licenses/* $d/licenses/
+    fi
     # Their debug info names the build environment's headers (the full GCC, Vulkan headers): Nix
     # took those for dependencies, ~300 MB. Symbols stay (crash reports).
     ${pkgs.binutils-unwrapped}/bin/strip --strip-debug $d/bin/sacredfire $d/bin/bb-gpu-capabilities
