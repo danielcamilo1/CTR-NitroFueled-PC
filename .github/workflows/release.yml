@@ -66,6 +66,20 @@ jobs:
         run: |
           [[ $GITHUB_REF == refs/tags/* ]] || export BB_ALLOW_DIRTY=1
           bash packaging/appimage.sh
+      # The package the AppImage bundles (the same derivation, already in the store) must carry
+      # the DLSS files, the default settings and the merge tool: the source filter in
+      # packaging/default.nix drops anything it does not name, silently.
+      - name: Check the package contents
+        run: |
+          pkg=$(nix-build --no-out-link --impure -E "import $PWD/packaging {}")
+          d=$pkg/share/sacredfire
+          ls -l "$d/bin" "$d/licenses"
+          for f in bin/sacredfire bin/gpu/libbbgpu.so bin/libsacredfire_dlss.so \
+                   packaging/bbport.default.ini tools/merge_update.py \
+                   licenses/NVIDIA-DLSS-SDK-LICENSE.txt licenses/dlss-bridge-LICENSE.txt; do
+            [[ -e $d/$f ]] || { echo "missing from the package: $f"; exit 1; }
+          done
+          ls "$d"/bin/libnvidia-ngx-dlss.so.* >/dev/null
       - uses: actions/upload-artifact@v4
         with:
           name: linux
