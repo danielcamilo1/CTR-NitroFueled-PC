@@ -4,15 +4,23 @@
 
 # CTR-NitroFueled-PC
 
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/danielcamilo)
+
 **Crash Team Racing: Nitro-Fueled (PS4, CUSA13795 v1.21) running natively on Windows 10/11 and Linux.**
 
-This is a Windows fork of [SacredFire](https://github.com/T3CHNOLOG1C/SacredFire), the native
-Linux port of the game by T3CHNOLOG1C. The game's own x86-64 code runs directly on the CPU, a
-small runtime replaces the PS4 system libraries, and a renderer derived from shadPS4 translates
-the PS4 GPU work to Vulkan. This fork adds the Windows layer (loader, memory, TLS, exceptions,
-files, timers) from Supermedo's Windows port of bbport, plus the fixes SacredFire needed on top
-of it: see [packaging/windows/README.md](packaging/windows/README.md). The Linux build it
-started from is kept up to date with the Windows one and released next to it as an AppImage.
+This is my fork of [GetLostIn's CTR-NitroFueled-PC](https://github.com/GetLostIn/CTR-NitroFueled-PC),
+and its point is to **bring the Linux version back**. GetLostIn's project is a Windows fork of
+[SacredFire](https://github.com/T3CHNOLOG1C/SacredFire), the native Linux port of the game by
+T3CHNOLOG1C, and its releases are Windows only. Here the Linux build gets every fix and feature
+made for Windows since then (internal resolution, the FSR 1 / FSR 3 / DLSS upscaling list, DLC,
+default settings, PS4 PKG Tool dumps) and is released as an AppImage next to the Windows ZIP,
+both built by GitHub Actions from the same commit.
+
+How it works: the game's own x86-64 code runs directly on the CPU, a small runtime replaces the
+PS4 system libraries, and a renderer derived from shadPS4 translates the PS4 GPU work to Vulkan.
+The Windows layer (loader, memory, TLS, exceptions, files, timers) comes from Supermedo's Windows
+port of bbport, plus the fixes SacredFire needed on top of it: see
+[packaging/windows/README.md](packaging/windows/README.md).
 
 > **No game files are included.** You need your own dump of the game and its 1.21 update.
 > Both builds of the 1.21 update work: the one for firmware 5.05 (the reference) and the one for
@@ -33,8 +41,7 @@ in the background with the experimental switch.
 
 **Status on Linux:** SacredFire's port, playable on the Steam Deck before the Windows work; the
 AppImage now carries the Windows-era fixes and features and is built by CI from each release's
-commit. This fork has not tested it on Linux hardware yet (DLSS on Linux least of all): reports
-in [issues](https://github.com/danielcamilo1/CTR-NitroFueled-PC/issues) are welcome.
+commit. Not yet tested on Linux hardware in this fork (DLSS on Linux least of all).
 
 | Release | What it brought |
 |---|---|
@@ -336,6 +343,13 @@ FSR 4 tooling were removed the same day
 ([docs/sacredfire/09-bloodborne-strip.md](docs/sacredfire/09-bloodborne-strip.md)). bbport's
 temporal upscalers and motion vectors remain in `gpu/`, off; its libGnm hook code remains without
 a function table (the table was generated from Bloodborne's executable and is not distributed).
+
+## Support
+
+This fork is free and open source, and it will stay that way. If it got CTR running on your Linux
+machine or Steam Deck, you can buy me a coffee — it is genuinely appreciated ☕
+
+[![Buy me a coffee at ko-fi.com](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/danielcamilo)
 
 ## Credits and licenses
 
