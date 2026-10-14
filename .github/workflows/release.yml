@@ -18,8 +18,10 @@ concurrency:
 env:
   # NVIDIA DLSS SDK bundled in the Windows package (dlss_bridge/, make_portable.py --dlss-sdk).
   DLSS_SDK_TAG: v310.9.1
-  # nixpkgs the Linux build and the AppImage's bundled libraries come from.
-  NIXPKGS_CHANNEL: nixos-26.05
+  # nixpkgs the Linux build and the AppImage's bundled libraries come from: a pinned nixos-unstable
+  # revision (vulkan-headers 1.4.357; the 26.05 release's 1.4.341 lacks extensions vk_instance.cpp
+  # names). Moving it is a deliberate change, so a tag always builds the same libraries.
+  NIXPKGS_REV: 7fd4004d0511991fff3a0524856a9be09e28c5f0
 
 jobs:
   linux:
@@ -38,7 +40,7 @@ jobs:
           fetch-depth: 0  # git describe: out/VERSION is the tag
       - uses: cachix/install-nix-action@v31
         with:
-          nix_path: nixpkgs=channel:${{ env.NIXPKGS_CHANNEL }}
+          nix_path: nixpkgs=https://github.com/NixOS/nixpkgs/archive/${{ env.NIXPKGS_REV }}.tar.gz
           extra_nix_config: |
             experimental-features = nix-command flakes
       - uses: DeterminateSystems/magic-nix-cache-action@v13
@@ -101,9 +103,12 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           bash build.sh
+      # MSVC gets the Vulkan headers alone: CLANG64's include folder also holds MinGW's CRT headers.
+      - name: Vulkan headers for MSVC
+        run: mkdir -p vk-include && cp -r /clang64/include/vulkan /clang64/include/vk_video vk-include/
       - name: DLSS bridge (MSVC)
         shell: cmd
-        run: dlss_bridge\build.bat "%GITHUB_WORKSPACE%\dlss-sdk" "${{ steps.msys2.outputs.msys2-location }}\clang64\include"
+        run: dlss_bridge\build.bat "%GITHUB_WORKSPACE%\dlss-sdk" "%GITHUB_WORKSPACE%\vk-include"
       - name: Portable ZIP
         run: |
           export MSYS2_ROOT="$(cygpath -w '${{ steps.msys2.outputs.msys2-location }}')"
@@ -147,5 +152,5 @@ jobs:
           - Linux: SacredFire-x86_64.AppImage (chmod +x and run; the launcher opens)
 
           Source of these binaries: this repository at ${TAG}; the AppImage's libraries come from
-          nixpkgs (${{ env.NIXPKGS_CHANNEL }}, exact version in SacredFire-x86_64.AppImage.build.txt)."
+          nixpkgs ${{ env.NIXPKGS_REV }} (version in SacredFire-x86_64.AppImage.build.txt)."
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$notes" --verify-tag dist/*
