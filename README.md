@@ -4,14 +4,15 @@
 
 # CTR-NitroFueled-PC
 
-**Crash Team Racing: Nitro-Fueled (PS4, CUSA13795 v1.21) running natively on Windows 10/11.**
+**Crash Team Racing: Nitro-Fueled (PS4, CUSA13795 v1.21) running natively on Windows 10/11 and Linux.**
 
 This is a Windows fork of [SacredFire](https://github.com/T3CHNOLOG1C/SacredFire), the native
 Linux port of the game by T3CHNOLOG1C. The game's own x86-64 code runs directly on the CPU, a
 small runtime replaces the PS4 system libraries, and a renderer derived from shadPS4 translates
 the PS4 GPU work to Vulkan. This fork adds the Windows layer (loader, memory, TLS, exceptions,
 files, timers) from Supermedo's Windows port of bbport, plus the fixes SacredFire needed on top
-of it: see [packaging/windows/README.md](packaging/windows/README.md).
+of it: see [packaging/windows/README.md](packaging/windows/README.md). The Linux build it
+started from is kept up to date with the Windows one and released next to it as an AppImage.
 
 > **No game files are included.** You need your own dump of the game and its 1.21 update.
 > Both builds of the 1.21 update work: the one for firmware 5.05 (the reference) and the one for
@@ -30,8 +31,14 @@ the 60 FPS patch (the FPS limit keeps it at 60 by default; up to 240). Shaders s
 time cause short stalls; they are cached and load at start from the next session on, or compile
 in the background with the experimental switch.
 
+**Status on Linux:** SacredFire's port, playable on the Steam Deck before the Windows work; the
+AppImage now carries the Windows-era fixes and features and is built by CI from each release's
+commit. This fork has not tested it on Linux hardware yet (DLSS on Linux least of all): reports
+in [issues](https://github.com/danielcamilo1/CTR-NitroFueled-PC/issues) are welcome.
+
 | Release | What it brought |
 |---|---|
+| [v0.3.1](https://github.com/danielcamilo1/CTR-NitroFueled-PC/releases/tag/v0.3.1) | The Linux AppImage is back, built from the same commit as the Windows ZIP: internal resolution (Linux only rendered 1080p at its size), the Upscaling list with NVIDIA DLSS on Linux too, DLC, default settings and PKG Tool dumps as on Windows; both packages built and released by GitHub Actions |
 | [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1 or NVIDIA DLSS (temporal, experimental) with DLSS quality modes, output and model (Transformer/CNN); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
@@ -68,6 +75,24 @@ The launcher also has the game patches, FPS limit, display, monitor and controll
 backups and imports (including decrypted PS4 saves), and optional DLC: add your own DLC packages
 (`.pkg`) and the port reports them installed (CTR Nitro-Fueled's DLC only carry the license; the
 content is in the game). Spanish and English.
+
+### Quick start (Linux)
+
+Download `SacredFire-x86_64.AppImage` from
+[Releases](https://github.com/danielcamilo1/CTR-NitroFueled-PC/releases), make it executable
+(`chmod +x SacredFire-x86_64.AppImage`) and run it: the launcher opens. Choose the game folder
+(the base game with the 1.21 update merged over it) and press *Play*. To merge the update without
+copying it, or to flatten a PS4 PKG Tool dump (`Image0` + `Sc0`):
+`python3 tools/merge_update.py <CUSA13795> <CUSA13795-patch> <CUSA13795-1.21>` (in this
+repository). Settings, saves and DLC live in `~/.local/share/sacredfire` (`dlc/` takes your own
+`.pkg` add-ons). Needs a Vulkan 1.3 GPU; AMD and Intel drivers come in the package, NVIDIA uses
+the system's driver (DLSS included). On a Steam Deck, *Add to Steam* in the launcher makes a game
+mode shortcut.
+
+Build it yourself with [Nix](https://nixos.org): `git clone --recursive <this repository>`,
+`bash build.sh` (it enters `shell.nix` by itself), then
+`BB_GAME_DIR=<CUSA13795-1.21> bash run.sh` or `bash launcher/bb-launcher.sh`.
+`packaging/appimage.sh` makes the AppImage (`.github/workflows/release.yml` shows the steps).
 
 ### Which game dumps work
 
