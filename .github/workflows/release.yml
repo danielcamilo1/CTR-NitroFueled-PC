@@ -46,8 +46,12 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@v13
       - name: Build
         run: nix-shell shell.nix --run 'BB_IN_NIX_SHELL=1 bash build.sh'
+      # The GPU library needs its user directory to exist (run.sh makes it and names it); a fresh
+      # runner has no ~/.local/share for the fallback.
       - name: Native tests
-        run: nix-shell shell.nix --run 'BB_IN_NIX_SHELL=1 bash build.sh --test'
+        run: |
+          mkdir -p out/test-user
+          BB_GPU_USER_DIR=$PWD/out/test-user nix-shell shell.nix --run 'BB_IN_NIX_SHELL=1 bash build.sh --test'
       - uses: actions/checkout@v4
         with:
           repository: NVIDIA/DLSS
