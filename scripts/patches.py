@@ -260,7 +260,15 @@ def main():
     p.add_argument('--out',type=Path,default=root/'out')
     p.add_argument('--settings',type=Path,default=root/'bbport.ini')
     p.add_argument('--external-only',action='store_true',help='accepted for older callers (the only mode)')
+    p.add_argument('--render-plan',action='store_true',
+                   help='print the settings\' render plan as "<pro 0|1> <heap 0|1> <label>" (nothing without one) and exit')
     a=p.parse_args()
+    if a.render_plan:
+        # run.sh: the PS4 Pro path and direct memory follow render_res, as run.py's apply_render_res.
+        plan=render_plan(read_settings(a.settings))
+        if plan is not None:
+            print(int(plan['pro']),int(plan['heap']),plan['label'])
+        return
     elf=(a.out/'eboot.elf').read_bytes()
     segments=eboot_segments(elf)
     found=external_patches(a.patches_dir,a.app_version,a.title_id)

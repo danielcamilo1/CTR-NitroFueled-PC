@@ -19,6 +19,12 @@ data=${BB_DATA_DIR:-.}
 out=$data/out
 mkdir -p "$out"
 export BB_CONFIG=${BB_CONFIG:-$data/bbport.ini}
+# The defaults (60 FPS limit, FSR 1, ...) the first time, as run.py and the Windows launcher do;
+# a newer package never replaces the player's bbport.ini.
+if [[ ! -e $BB_CONFIG && -f packaging/bbport.default.ini ]]; then
+    cp packaging/bbport.default.ini "$BB_CONFIG"
+    echo "Settings: $BB_CONFIG created from the defaults"
+fi
 if [[ -z ${BB_PREBUILT:-} && -z ${BB_IN_NIX_SHELL:-} ]] && ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3; } && command -v nix-shell >/dev/null; then
     args=''; if (( $# )); then args=$(printf '%q ' "$@"); fi
     exec env BB_IN_NIX_SHELL=1 nix-shell shell.nix --run "bash run.sh $args"
@@ -48,7 +54,15 @@ if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1
 # BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default: orig/CUSA13795, SacredFire's
 # read-only link tree of the merged CTR dump (update 1.21 over the base game).
 game=${BB_GAME_DIR:-orig/CUSA13795}
-if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
+if [[ ! -f $game/eboot.bin ]]; then
+    if [[ -f $game/Image0/eboot.bin ]]; then
+        echo "$game has the PS4 PKG Tool layout (Image0 and Sc0): make the game folder with" \
+             "python3 tools/merge_update.py <base game> <update> <merged folder>, which reads that layout." >&2
+    else
+        echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2
+    fi
+    exit 1
+fi
 # The game check (scripts/game_check.py) compares the executable image with the supported one
 # (Crash Team Racing Nitro-Fueled CUSA13795 1.21) and names the profile the runtime reads.
 profile=$("$PYTHON" scripts/game_check.py "$game") || { echo "$profile" >&2; exit 2; }
@@ -68,7 +82,9 @@ fi
 "$PYTHON" scripts/link_modules.py "$game" --out "$out" --modules libc.prx libSceFios2.prx libSceNpToolkit2.prx
 # SacredFire: symbol names for this eboot's host-side imports (shadPS4's aerolib list, fetched once).
 "$PYTHON" tools/gen_import_names.py --out "$out"
-"$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
+# DLC (optional): the player's add-on packages in $data/dlc (BB_DLC_DIR), reported installed.
+"$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}" \
+    --dlc-dir "${BB_DLC_DIR:-$data/dlc}"
 # The game runs at its own 30 FPS against a 60 Hz vblank unless the 60 FPS patch is on. Patches
 # come from patches/CrashTeamRacing.xml (community patches by illusion and TroyWarez, from
 # https://github.com/illusionyy/PS-Game-Patch), chosen in the in-game menu (bbport.ini patch_*
@@ -79,6 +95,17 @@ fps=${BB_FPS:-30}
 patch_args=(--patches "$out/patches.bin")
 # BB_NEO=1: PS4 Pro mode (sceKernelIsNeoMode, 7-CPU mode, 5568 MiB direct memory); the game then
 # picks its Pro rendering path. Off by default: the Steam Deck is closer to a base PS4.
+# bbport.ini render_res (or a DLSS quality) picks the path as run.py does (scripts/patches.py
+# render_plan, docs/sacredfire/13-resolution.md): the Pro path at every internal resolution but
+# 1080p, whose render scale patches only take effect there; native 4K's larger GPU heap also
+# needs more than the Pro's direct memory.
+read -r plan_pro plan_heap plan_label < <("$PYTHON" scripts/patches.py --render-plan --settings "$BB_CONFIG") || true
+if [[ -n ${plan_pro:-} ]]; then
+    BB_NEO=$plan_pro
+    if [[ $plan_heap == 1 ]] && (( ${BB_DMEM_MB:-0} < 7168 )); then export BB_DMEM_MB=7168; fi
+    if [[ $plan_pro == 1 ]]; then path='PS4 Pro'; else path='base PS4'; fi
+    echo "Internal resolution: $plan_label ($path rendering path)"
+fi
 export BB_NEO=${BB_NEO:-0}
 echo "PS4 Pro mode: ${BB_NEO} (BB_NEO=1 turns it on)"
 # The on-disk shader/pipeline cache (user/cache/CUSA13795) is kept across launches: the GPU

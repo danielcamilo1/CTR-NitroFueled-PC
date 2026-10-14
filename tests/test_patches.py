@@ -161,6 +161,22 @@ class RenderResTests(unittest.TestCase):
         self.assertEqual(plan({**dlss('auto'), 'render_res': '720'})['label'], '720p')
         self.assertEqual(plan({**dlss('quality'), 'temporal': 'fsr3'})['label'], '1440p')
 
+    def test_render_plan_command_for_run_sh(self):
+        # run.sh reads "<pro> <heap> <label>" to set BB_NEO and BB_DMEM_MB, as run.py does.
+        import subprocess
+        import sys
+        def command(text):
+            with tempfile.TemporaryDirectory() as tmp:
+                ini = Path(tmp) / 'bbport.ini'
+                ini.write_text(text)
+                return subprocess.run([sys.executable, str(ROOT / 'scripts' / 'patches.py'), '--render-plan',
+                                       '--settings', str(ini)], capture_output=True, text=True,
+                                      check=True).stdout
+        self.assertEqual(command(''), '')
+        self.assertEqual(command('render_res=1080\n'), '0 0 1080p\n')
+        self.assertEqual(command('render_res=1440\n'), '1 0 1440p\n')
+        self.assertEqual(command('render_res=2160\n'), '1 1 2160p\n')
+
 
 class GamePatchTests(unittest.TestCase):
     """The bundled CTR patches, chosen through bbport.ini patch_* keys (the in-game menu)."""
