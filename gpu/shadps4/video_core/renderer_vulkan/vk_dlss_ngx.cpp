@@ -185,7 +185,8 @@ DlssNgx::DlssNgx() : impl{std::make_unique<Impl>()} {
         dll_directory = directory.wstring();
         data_directory = data.wstring();
     } catch (const std::exception&) {
-        return impl->Disable("a folder path could not be converted for NGX");
+        impl->Disable("a folder path could not be converted for NGX");
+        return;
     }
     if (!impl->api->Configure(dll_directory.c_str(), data_directory.c_str(), BridgeLog)) {
         impl->Disable("the bridge could not be configured");
