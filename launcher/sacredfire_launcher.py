@@ -67,8 +67,21 @@ PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
 PATCHES = [
     ("patch_60fps", "60 FPS unlock", "By illusion. 60 in menus, 40-45 in races on a Steam Deck"),
     ("patch_no_motion_blur", "Disable motion blur", "By illusion"),
-    ("patch_pro_1080p", "1080p in PS4 Pro mode", "By TroyWarez; only with PS4 Pro mode below"),
 ]
+# Display and performance (bbport.ini keys the in-game menu and the Windows launcher edit too).
+# render_res: the scene size; above and below 1080p the game's PS4 Pro path, which run.sh turns
+# on by itself (scripts/patches.py render_plan, docs/sacredfire/13-resolution.md).
+RENDER_RESOLUTIONS = [("480p (854 x 480, very low-end PCs)", "480"), ("720p (1280 x 720, low-end PCs)", "720"),
+                      ("1080p (1920 x 1080)", "1080"), ("1440p (2560 x 1440, PS4 Pro)", "1440"),
+                      ("1620p (2880 x 1620)", "1620"), ("4K (3840 x 2160)", "2160")]
+UPSCALERS = [("Off", "off"), ("AMD FSR 1", "fsr1"), ("AMD FSR 3 (experimental)", "fsr3"),
+             ("NVIDIA DLSS (experimental)", "dlss")]
+DLSS_QUALITIES = [("Auto (internal resolution)", "auto"), ("DLAA (native)", "dlaa"), ("Quality", "quality"),
+                  ("Balanced", "balanced"), ("Performance", "performance"),
+                  ("Ultra Performance", "ultra_performance")]
+DLSS_OUTPUTS = [("1920 x 1080", "1080"), ("3840 x 2160 (4K)", "2160")]
+DLSS_MODELS = [("Transformer (recommended)", "transformer"), ("CNN", "cnn")]
+FPS_LIMITS = [("No limit", "0")] + [(f"{v} FPS", str(v)) for v in (30, 60, 72, 90, 120, 144, 240)]
 
 DEFAULTS = {
     "ui_language": "",
@@ -79,7 +92,6 @@ DEFAULTS = {
     "present_mode": "Mailbox",
     "gamepad": "",
     "gamepad_name": "",
-    "neo": False,
     "clear_shader_cache": False,
     "frame_stats": False,
     "save_log": False,
@@ -88,6 +100,8 @@ DEFAULTS = {
     "extra_env": "",
 }
 INI_DEFAULTS = {"show_fps": "0", **{key: "0" for key, _, _ in PATCHES}}
+# The first bbport.ini, shared with run.sh and the Windows package (60 FPS limit, FSR 1, ...).
+DEFAULT_INI = PORT_DIR / "packaging" / "bbport.default.ini"
 
 
 def load_settings():
@@ -114,7 +128,10 @@ def load_ini():
     try:
         lines = ini_path().read_text().splitlines()
     except OSError:
-        pass
+        try:
+            lines = DEFAULT_INI.read_text().splitlines()
+        except OSError:
+            pass
     for line in lines:
         if "=" in line and not line.lstrip().startswith("#"):
             key, value = line.split("=", 1)
@@ -150,11 +167,9 @@ def game_environment(s):
         env["BB_USER_DIR"] = s["user_dir"]
     env["BB_LANGUAGE"] = s["language"]
     env["BB_MENU_LANGUAGE"] = language()
-    env["BB_FULLSCREEN"] = "1" if s["fullscreen"] else "0"
     env["BB_PRESENT_MODE"] = s["present_mode"]
     if s.get("gamepad"):
         env["BB_GAMEPAD"] = s["gamepad"]
-    env["BB_NEO"] = "1" if s.get("neo") else "0"
     if s.get("clear_shader_cache"):
         env["BB_CLEAR_SHADER_CACHE"] = "1"
     if s["frame_stats"]:
@@ -319,15 +334,60 @@ class LauncherWindow(Adw.ApplicationWindow):
             self.patch_rows[key] = row
         page.add(patches)
 
-        console = Adw.PreferencesGroup(title=tr("Console"))
-        self.neo_row = Adw.SwitchRow(title=tr("PS4 Pro mode"),
-                                     subtitle=tr("Neo mode, 7 CPUs, 5568 MiB direct memory: the game's Pro rendering path"),
-                                     active=self.settings["neo"])
-        console.add(self.neo_row)
-        page.add(console)
+        performance = Adw.PreferencesGroup(title=tr("Performance"))
+        self.fps_limit_row = combo_row(tr("FPS limit"), tr("With the 60 FPS patch the game runs as fast as the PC allows"),
+                                       FPS_LIMITS, self.ini.get("fps_limit", "60"))
+        performance.add(self.fps_limit_row)
+        self.async_row = Adw.SwitchRow(title=tr("Compile shaders in the background (experimental)"),
+                                       subtitle=tr("Fewer hitches when an effect is first seen; an effect may show up a frame late"),
+                                       active=self.ini.get("async_pipelines") == "1")
+        performance.add(self.async_row)
+        page.add(performance)
 
         screen = Adw.PreferencesGroup(title=tr("Display"))
-        self.fullscreen_row = Adw.SwitchRow(title=tr("Fullscreen"), active=self.settings["fullscreen"])
+        self.render_res_row = combo_row(tr("Internal resolution"),
+                                        tr("The size the game draws its 3D scene at. Above 1080p the picture is output at 4K "
+                                           "(the game's PS4 Pro path, turned on by itself); 720p and 480p help low-end PCs. "
+                                           "Needs a restart"),
+                                        RENDER_RESOLUTIONS, self.ini.get("render_res", "1080"))
+        screen.add(self.render_res_row)
+        temporal = self.ini.get("temporal")
+        if temporal not in [v for _, v in UPSCALERS]:  # v0.3 test builds: fsr3=1, fsr1=0
+            if self.ini.get("fsr3") == "1":
+                temporal = "fsr3"
+            elif self.ini.get("fsr1") == "0":
+                temporal = "off"
+            else:
+                temporal = "fsr1"
+        self.upscaler_row = combo_row(tr("Upscaling"),
+                                      tr("FSR 1 enlarges a smaller scene with sharper edges. FSR 3 and DLSS rebuild detail over "
+                                         "several frames (DLSS needs an NVIDIA RTX card; FSR 3 runs otherwise). Experimental: "
+                                         "switch to FSR 1 if you see trails"),
+                                      UPSCALERS, temporal)
+        screen.add(self.upscaler_row)
+        self.dlss_quality_row = combo_row(tr("DLSS quality"),
+                                          tr("Auto uses the internal resolution; the others draw the scene at NVIDIA's share of the DLSS output"),
+                                          DLSS_QUALITIES, self.ini.get("dlss_quality", "auto"))
+        screen.add(self.dlss_quality_row)
+        self.dlss_output_row = combo_row(tr("DLSS output"), None, DLSS_OUTPUTS, self.ini.get("dlss_output", "1080"))
+        screen.add(self.dlss_output_row)
+        self.dlss_model_row = combo_row(tr("DLSS model"), None, DLSS_MODELS, self.ini.get("dlss_model", "transformer"))
+        screen.add(self.dlss_model_row)
+        try:
+            sharpness = float(self.ini.get("fsr3_sharpness", "0.30"))
+        except ValueError:
+            sharpness = 0.30
+        self.fsr3_sharpness_row = Adw.SpinRow.new_with_range(0.0, 1.0, 0.05)
+        self.fsr3_sharpness_row.set_title(tr("FSR 3 sharpness"))
+        self.fsr3_sharpness_row.set_digits(2)
+        self.fsr3_sharpness_row.set_value(sharpness)
+        screen.add(self.fsr3_sharpness_row)
+        for row in (self.upscaler_row, self.dlss_quality_row):
+            row.connect("notify::selected", lambda *_: self.update_display_rows())
+        self.update_display_rows()
+        # bbport.ini, like the in-game menu's switch (BB_FULLSCREEN would override that one).
+        self.fullscreen_row = Adw.SwitchRow(title=tr("Fullscreen"),
+                                            active=self.ini.get("fullscreen", "1" if self.settings["fullscreen"] else "0") == "1")
         screen.add(self.fullscreen_row)
         self.present_row = combo_row(tr("Presentation"), None, PRESENT_MODES, self.settings["present_mode"])
         screen.add(self.present_row)
@@ -367,6 +427,17 @@ class LauncherWindow(Adw.ApplicationWindow):
         page.add(steam)
         self.update_user_status()
         return page
+
+    def update_display_rows(self):
+        """DLSS rows with DLSS, the sharpness with FSR 3; a DLSS quality sets the resolution."""
+        upscaler = combo_value(self.upscaler_row)
+        dlss = upscaler == "dlss"
+        dlss_sized = dlss and combo_value(self.dlss_quality_row) != "auto"
+        for row in (self.dlss_quality_row, self.dlss_model_row):
+            row.set_visible(dlss)
+        self.dlss_output_row.set_visible(dlss_sized)
+        self.fsr3_sharpness_row.set_visible(upscaler == "fsr3")
+        self.render_res_row.set_sensitive(not dlss_sized)
 
     def game_dir(self):
         return Path(self.settings["game_dir"]).expanduser()
@@ -436,7 +507,6 @@ class LauncherWindow(Adw.ApplicationWindow):
         s["language"] = combo_value(self.language_row)
         s["gamepad"] = combo_value(self.gamepad_row)
         s["gamepad_name"] = self.gamepad_row.get_selected_item().get_string() if s["gamepad"] else ""
-        s["neo"] = self.neo_row.get_active()
         s["fullscreen"] = self.fullscreen_row.get_active()
         s["present_mode"] = combo_value(self.present_row)
         s["mangohud"] = self.mangohud_row.get_active()
@@ -450,6 +520,19 @@ class LauncherWindow(Adw.ApplicationWindow):
         for key, row in self.patch_rows.items():
             self.ini[key] = "1" if row.get_active() else "0"
         self.ini["show_fps"] = "1" if self.fps_row.get_active() else "0"
+        self.ini["fullscreen"] = "1" if self.fullscreen_row.get_active() else "0"
+        self.ini["fps_limit"] = combo_value(self.fps_limit_row)
+        self.ini["async_pipelines"] = "1" if self.async_row.get_active() else "0"
+        self.ini["render_res"] = combo_value(self.render_res_row)
+        self.ini["temporal"] = combo_value(self.upscaler_row)
+        self.ini["dlss_quality"] = combo_value(self.dlss_quality_row)
+        self.ini["dlss_output"] = combo_value(self.dlss_output_row)
+        self.ini["dlss_model"] = combo_value(self.dlss_model_row)
+        self.ini["fsr3_sharpness"] = f"{self.fsr3_sharpness_row.get_value():.2f}"
+        # The 1080p Pro patch's switch is gone (render_res decides, as in the Windows launcher): an
+        # older bbport.ini that has it on is turned off. temporal= wins over the old fsr1/fsr3 keys.
+        if "patch_pro_1080p" in self.ini:
+            self.ini["patch_pro_1080p"] = "0"
         save_ini(self.ini, self.ini_lines)
         self.ini, self.ini_lines = load_ini()
 
