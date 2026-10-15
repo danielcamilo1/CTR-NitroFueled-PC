@@ -253,7 +253,8 @@ def write_blob(out, writes):
 def main():
     root=Path(__file__).resolve().parent.parent
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--patches-dir',type=Path,default=root/'patches',help='patch XML files (shadPS4 format)')
+    p.add_argument('--patches-dir',type=Path,action='append',
+                   help='a folder of patch XML files (shadPS4 format); repeatable (default: patches/)')
     p.add_argument('--patches-config',type=Path,help='patches.json: enabled/disabled patches')
     p.add_argument('--app-version',default=APP_VERSION)
     p.add_argument('--title-id',default=TITLE_ID,help='the game (patch files naming other ids are skipped)')
@@ -271,7 +272,9 @@ def main():
         return
     elf=(a.out/'eboot.elf').read_bytes()
     segments=eboot_segments(elf)
-    found=external_patches(a.patches_dir,a.app_version,a.title_id)
+    found=[]
+    for folder in a.patches_dir or [root/'patches']:  # a patch named twice: the first folder's
+        found+=[p for p in external_patches(folder,a.app_version,a.title_id) if p[0] not in {q[0] for q in found}]
     settings=read_settings(a.settings)
     writes=compile_external(external_selection(found,a.patches_config,settings)+render_patches(settings),
                             segments,elf)

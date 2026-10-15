@@ -88,9 +88,10 @@ fi
 # The game runs at its own 30 FPS against a 60 Hz vblank unless the 60 FPS patch is on. Patches
 # come from patches/CrashTeamRacing.xml (community patches by illusion and TroyWarez, from
 # https://github.com/illusionyy/PS-Game-Patch), chosen in the in-game menu (bbport.ini patch_*
-# keys) or patches.json; BB_PATCHES_DIR adds a folder of further shadPS4-format XML files.
+# keys) or patches.json; further shadPS4-format XML files go in $data/patches (the launcher's
+# Patches tab), BB_PATCHES_DIR replaces the built-in folder.
 fps=${BB_FPS:-30}
-"$PYTHON" scripts/patches.py --patches-dir "${BB_PATCHES_DIR:-patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}" \
+"$PYTHON" scripts/patches.py --patches-dir "${BB_PATCHES_DIR:-patches}" --patches-dir "$data/patches" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}" \
     --app-version 01.21 --title-id CUSA13795 --out "$out" --settings "$BB_CONFIG"
 patch_args=(--patches "$out/patches.bin")
 # BB_NEO=1: PS4 Pro mode (sceKernelIsNeoMode, 7-CPU mode, 5568 MiB direct memory); the game then

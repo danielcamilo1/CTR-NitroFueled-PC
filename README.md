@@ -225,16 +225,18 @@ the game. The game folder defaults to `orig/CUSA13795`. Saves and the shader cac
 settings to `bbport.ini`; `BB_DATA_DIR` moves all of them. The first start compiles shaders as it
 goes; later starts preload them from the cache (`BB_CLEAR_SHADER_CACHE=1` starts fresh).
 
-Or the launcher (pick the game folder and the controller, then *Start*):
+Or the launcher (pick the game folder, then *Play*):
 
 ```bash
 bash launcher/bb-launcher.sh         # launcher/install-desktop.sh adds it to the app menu
 ```
 
-The launcher (GTK4/libadwaita) has pages for the game folder, the controller, the game patches,
-PS4 Pro mode, display (fullscreen, FPS counter) and developer switches (frame statistics, log to
-a file, clear the shader cache, Vulkan validation, extra environment), and shows the game's
-output. `--play` starts the game with the saved settings and no window (Steam Deck game mode).
+The launcher (GTK4/libadwaita, Spanish or English) has the Windows launcher's tabs: *Play* (the
+game folder, preparing it from the base game and the 1.21 update or from a PS4 PKG Tool dump,
+the game's output), *Settings* (FPS limit, internal resolution, upscaling, DLSS, fullscreen,
+monitor, controller, game language), *Keyboard*, *Patches*, *Saves* (backups, import and export),
+*DLC* and *Tools* (logs, shader cache, Add to Steam, developer switches). `--play` starts the
+game with the saved settings and no window (Steam Deck game mode).
 The menu entry and the launcher use the game's own icon (`sce_sys/icon0.png`), copied from your
 game folder into your icon theme; the game window shows it too.
 
@@ -250,14 +252,15 @@ LShift Circle, E Square, Q Triangle, 1/3 L1/R1, R/F L2/R2, Z/C L3/R3, Enter Opti
 d-pad. The launcher's *Keyboard* page rebinds them (`key.<input>=` lines in `bbport.ini`;
 `pad.<input>=` rebinds gamepad buttons).
 
-**PS4 Pro mode** (`BB_NEO=1`, the launcher's switch): the game sees a PS4 Pro (7-CPU mode,
-5568 MiB of direct memory) and takes its Pro rendering path; with the 1080p patch it renders
-at 1920×1080. Off by default: the Steam Deck is closer to a base PS4.
+**PS4 Pro mode** (`BB_NEO=1`): the game sees a PS4 Pro (7-CPU mode, 5568 MiB of direct memory)
+and takes its Pro rendering path. The launcher has no switch for it: *Internal resolution* turns it
+on for every resolution but 1080p.
 
 **Mods:** loose-file mod folders (with the game's folders inside) are overlaid on the game
 folder at start, with enable switches and load order in `mods.json`
 (`scripts/mods.py`, [docs/MODS.md](docs/MODS.md), written for bbport). Further shadPS4-format
-patch files go into `patches/` or `BB_PATCHES_DIR`, selected through `patches.json`.
+patch files go into the data directory's `patches/` (the launcher's *Patches* tab), selected
+through `patches.json`; `BB_PATCHES_DIR` replaces the built-in folder.
 
 ## AppImage (Steam Deck)
 
