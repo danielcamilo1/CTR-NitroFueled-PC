@@ -52,8 +52,11 @@ jobs:
         run: |
           mkdir -p out/test-user
           BB_GPU_USER_DIR=$PWD/out/test-user nix-shell shell.nix --run 'BB_IN_NIX_SHELL=1 bash build.sh --test'
-      - name: Python tests
-        run: nix-shell shell.nix --run 'python3 -m unittest discover -s tests'
+      # The launcher's tabs and handlers on a virtual display (tests/launcher_gui_smoke.py).
+      - name: Launcher test
+        run: |
+          command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
+          xvfb-run -a nix-shell launcher/shell.nix --run 'GDK_BACKEND=x11 python3 tests/launcher_gui_smoke.py'
       - uses: actions/checkout@v4
         with:
           repository: NVIDIA/DLSS
