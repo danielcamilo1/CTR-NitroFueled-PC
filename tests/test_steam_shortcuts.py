@@ -49,6 +49,19 @@ class SteamShortcuts(unittest.TestCase):
             self.assertEqual(top["shortcuts"]["1"]["LaunchOptions"], "")
             self.assertFalse(path.with_name(path.name + ".tmp").exists())
 
+    def test_named_after_the_game_and_renames_the_old_entry(self):
+        self.assertEqual(ss.NAME, "Crash Team Racing Nitro Fueled")
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "shortcuts.vdf"
+            old = ss.make_entry("/games/a.AppImage", "/games", name="SacredFire", launch_options="--play")
+            elsewhere = ss.make_entry("/other/a.AppImage", "/other", name="SacredFire")
+            path.write_bytes(ss.serialize({"shortcuts": {"0": old, "1": elsewhere}}))
+            entry = ss.make_entry("/games/a.AppImage", "/games", launch_options="--play")
+            self.assertFalse(ss.add_shortcut(path, entry))
+            top = ss.parse(path.read_bytes())
+            self.assertEqual(top["shortcuts"], {"0": entry, "1": elsewhere})
+            self.assertEqual(top["shortcuts"]["0"]["AppName"], "Crash Team Racing Nitro Fueled")
+
     def test_launcher_command(self):
         exe, start_dir, options = ss.launcher_command()
         self.assertEqual(options, "--play")

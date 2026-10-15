@@ -12,7 +12,10 @@ import subprocess
 import zlib
 from pathlib import Path
 
-NAME = "SacredFire"
+NAME = "Crash Team Racing Nitro Fueled"
+# Names earlier launchers gave the shortcut: an entry under one of them for the same executable is
+# renamed, not left next to the new one.
+OLD_NAMES = ("SacredFire",)
 
 
 def steam_roots():
@@ -133,14 +136,15 @@ def make_entry(exe, start_dir, name=NAME, launch_options="", icon=""):
 
 def add_shortcut(path, entry):
     """Adds `entry` to the shortcuts file at `path` (created if missing); an entry with the same
-    executable and name is replaced. Returns True when a new entry was added, False on replace."""
+    executable and name (or an older name, OLD_NAMES) is replaced. Returns True when a new entry
+    was added, False on replace."""
     path = Path(path)
     data = path.read_bytes() if path.exists() else b""
     top = parse(data)
     shortcuts = top.setdefault("shortcuts", {})
     for key, existing in list(shortcuts.items()):
         if isinstance(existing, dict) and existing.get("Exe") == entry["Exe"] \
-                and existing.get("AppName") == entry["AppName"]:
+                and existing.get("AppName") in (entry["AppName"], *OLD_NAMES):
             shortcuts[key] = entry
             added = False
             break

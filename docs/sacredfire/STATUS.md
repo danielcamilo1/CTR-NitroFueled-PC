@@ -176,7 +176,8 @@ with the desktop apps closed.
 
 - Launcher, log page: *Copy* (clipboard) and *Export log…* (a file dialog; `sacredfire-<date>.log`),
   from bbport PR 78, for bug reports.
-- Launcher, settings page: *Steam → Add to Steam* writes a non-Steam shortcut named SacredFire into
+- Launcher, settings page: *Steam → Add to Steam* writes a non-Steam shortcut named Crash Team Racing Nitro Fueled
+  (an older one named SacredFire for the same executable is renamed) into
   every Steam user's `userdata/<id>/config/shortcuts.vdf` (launcher/steam_shortcuts.py: the binary
   VDF read and written in place, Steam's CRC32 app id, an existing entry replaced). The shortcut
   runs the AppImage (or launcher/bb-launcher.sh from a checkout) with `--play`, so the game starts
