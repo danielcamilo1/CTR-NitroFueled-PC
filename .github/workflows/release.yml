@@ -52,6 +52,8 @@ jobs:
         run: |
           mkdir -p out/test-user
           BB_GPU_USER_DIR=$PWD/out/test-user nix-shell shell.nix --run 'BB_IN_NIX_SHELL=1 bash build.sh --test'
+      - name: Python tests
+        run: nix-shell shell.nix --run 'python3 -m unittest discover -s tests'
       - uses: actions/checkout@v4
         with:
           repository: NVIDIA/DLSS
@@ -80,6 +82,19 @@ jobs:
             [[ -e $d/$f ]] || { echo "missing from the package: $f"; exit 1; }
           done
           ls "$d"/bin/libnvidia-ngx-dlss.so.* >/dev/null
+      # The packaged launcher opens its window on a virtual display and keeps running: a Python
+      # error while building the settings page would leave no window (the app then quits) or a
+      # traceback in its output.
+      - name: Launcher smoke test
+        run: |
+          command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
+          pkg=$(nix-build --no-out-link --impure -E "import $PWD/packaging {}")
+          export HOME=$(mktemp -d)
+          status=0
+          timeout -k 5 30 xvfb-run -a "$pkg/bin/sacredfire" > launcher.log 2>&1 || status=$?
+          cat launcher.log
+          [[ $status == 124 || $status == 137 ]] || { echo "the launcher exited by itself (status $status)"; exit 1; }
+          ! grep -q Traceback launcher.log
       - uses: actions/upload-artifact@v4
         with:
           name: linux
