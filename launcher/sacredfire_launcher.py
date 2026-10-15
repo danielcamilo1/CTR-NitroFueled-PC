@@ -427,10 +427,11 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.last_label.add_css_class("dim-label")
         page.append(self.last_label)
         expander = Gtk.Expander(label=T("Registro", "Log"), expanded=True, vexpand=True)
-        old = self.log_area.get_parent()
-        if old:
-            old.set_child(None)
+        # The log outlives the tab: it moves from the previous Play tab's expander to this one.
+        if getattr(self, "log_expander", None):
+            self.log_expander.set_child(None)
         expander.set_child(self.log_area)
+        self.log_expander = expander
         page.append(expander)
         self.update_play()
         return page
