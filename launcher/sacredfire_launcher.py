@@ -26,11 +26,13 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
 
 PORT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / "scripts"))
+import content_profile  # noqa: E402
 import game_check  # noqa: E402
+import patches as game_patches  # noqa: E402
 import steam_shortcuts  # noqa: E402
 
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
@@ -61,13 +63,14 @@ LANGUAGES = [("English", "1"), ("Spanish (Latin America)", "20"), ("French", "2"
              ("Portuguese (Brazil)", "17")]
 PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
                  ("FIFO Relaxed", "FifoRelaxed"), ("Immediate", "Immediate")]
-# Game patches (patches/CrashTeamRacing.xml, scripts/patches.py; community patches by illusion and
-# TroyWarez from https://github.com/illusionyy/PS-Game-Patch): bbport.ini key,
-# label, note. The in-game menu edits the same keys.
-PATCHES = [
-    ("patch_60fps", "60 FPS unlock", "By illusion. 60 in menus, 40-45 in races on a Steam Deck"),
-    ("patch_no_motion_blur", "Disable motion blur", "By illusion"),
-]
+# Game patches: every patch for CUSA13795 1.21 in the patches folder's shadPS4-format XML files
+# (patches/CrashTeamRacing.xml: community patches by illusion and TroyWarez from
+# https://github.com/illusionyy/PS-Game-Patch), as the Windows launcher lists them. The ones the
+# in-game menu also switches keep their bbport.ini key (scripts/patches.py GAME_PATCH_KEYS); the
+# others go to patches.json. The 1080p Pro patch is not listed: Internal resolution decides it.
+PATCH_INI_KEYS = {patch: key for key, patch in game_patches.GAME_PATCH_KEYS.items()}
+HIDDEN_PATCHES = {game_patches.GAME_PATCH_KEYS["patch_pro_1080p"]}
+PATCHES_DIR = Path(os.environ.get("BB_PATCHES_DIR", PORT_DIR / "patches"))
 # Display and performance (bbport.ini keys the in-game menu and the Windows launcher edit too).
 # render_res: the scene size; above and below 1080p the game's PS4 Pro path, which run.sh turns
 # on by itself (scripts/patches.py render_plan, docs/sacredfire/13-resolution.md).
@@ -90,6 +93,9 @@ DEFAULTS = {
     "language": "1",
     "fullscreen": False,
     "present_mode": "Mailbox",
+    "display": "",
+    "dlc": True,
+    "dlc_disabled": "",
     "gamepad": "",
     "gamepad_name": "",
     "clear_shader_cache": False,
@@ -99,7 +105,7 @@ DEFAULTS = {
     "vk_validation": False,
     "extra_env": "",
 }
-INI_DEFAULTS = {"show_fps": "0", **{key: "0" for key, _, _ in PATCHES}}
+INI_DEFAULTS = {"show_fps": "0", **{key: "0" for key in game_patches.GAME_PATCH_KEYS}}
 # The first bbport.ini, shared with run.sh and the Windows package (60 FPS limit, FSR 1, ...).
 DEFAULT_INI = PORT_DIR / "packaging" / "bbport.default.ini"
 
@@ -168,6 +174,11 @@ def game_environment(s):
     env["BB_LANGUAGE"] = s["language"]
     env["BB_MENU_LANGUAGE"] = language()
     env["BB_PRESENT_MODE"] = s["present_mode"]
+    if s.get("display"):
+        env["BB_DISPLAY"] = s["display"]
+    env["BB_DLC"] = "1" if s.get("dlc", True) else "0"
+    if s.get("dlc_disabled"):
+        env["BB_DLC_DISABLED"] = s["dlc_disabled"]
     if s.get("gamepad"):
         env["BB_GAMEPAD"] = s["gamepad"]
     if s.get("clear_shader_cache"):
@@ -187,14 +198,48 @@ def game_environment(s):
     return env
 
 
-def connected_gamepads():
-    """(GUID, name) of the connected gamepads (bb-gpu-capabilities --gamepads), [] if unknown."""
+def capabilities(option):
+    """Lines of bb-gpu-capabilities `option`, split at tabs; [] if unknown."""
     tool = PORT_DIR / ("bin" if PACKAGED else "out") / "bb-gpu-capabilities"
     try:
-        run = subprocess.run([str(tool), "--gamepads"], capture_output=True, text=True, timeout=5)
+        run = subprocess.run([str(tool), option], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return []
-    return [tuple(line.split("\t", 1)) for line in run.stdout.splitlines() if "\t" in line]
+    return [line.split("\t") for line in run.stdout.splitlines() if "\t" in line]
+
+
+def connected_gamepads():
+    """(GUID, name) of the connected gamepads (bb-gpu-capabilities --gamepads), [] if unknown."""
+    return [(fields[0], "\t".join(fields[1:])) for fields in capabilities("--gamepads")]
+
+
+def connected_displays():
+    """(BB_DISPLAY value, label) of the monitors in SDL's order, numbered from 1 as BB_DISPLAY
+    takes them (bb-gpu-capabilities --displays: name, WxH, primary)."""
+    displays = []
+    for number, fields in enumerate(capabilities("--displays"), 1):
+        label = f"{number}: {fields[0]}" + (f" ({fields[1]})" if len(fields) > 1 else "")
+        if len(fields) > 2 and fields[2] == "1":
+            label += tr(" - primary")
+        displays.append((str(number), label))
+    return displays
+
+
+def patches_config_path():
+    return Path(os.environ.get("BB_PATCHES_CONFIG", DATA_DIR / "patches.json"))
+
+
+def load_patches_config():
+    """patches.json: {"enabled": [...], "disabled": [...]} (run.sh passes it to scripts/patches.py)."""
+    try:
+        config = json.loads(patches_config_path().read_text())
+    except (OSError, ValueError):
+        config = {}
+    return {"enabled": list(config.get("enabled", [])), "disabled": list(config.get("disabled", []))}
+
+
+def dlc_dir():
+    return Path(os.environ.get("BB_DLC_DIR", DATA_DIR / "dlc"))
 
 
 def flat_button(icon, tooltip, handler):
@@ -232,6 +277,11 @@ ISSUE2_MARKER = "SacredFire issue #2"
 ISSUE2_URL = "https://github.com/T3CHNOLOG1C/SacredFire/issues/2"
 
 
+def game_icon_path():
+    share = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    return share / "icons/hicolor/512x512/apps" / f"{APP_ID}.png"
+
+
 def install_game_icon(game_dir):
     """The game's own icon (sce_sys/icon0.png) as this app's icon: copied into the user's icon
     theme under the application id, where GTK and the desktop find it (launcher/install-desktop.sh
@@ -240,8 +290,7 @@ def install_game_icon(game_dir):
         source = Path(game_dir).expanduser() / "sce_sys/icon0.png"
         if not source.is_file():
             return False
-        share = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
-        target = share / "icons/hicolor/512x512/apps" / f"{APP_ID}.png"
+        target = game_icon_path()
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.is_file() or target.stat().st_size != source.stat().st_size:
             target.write_bytes(source.read_bytes())
@@ -309,33 +358,29 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.user_row.add_suffix(flat_button("folder-symbolic", tr("Open in the file manager"),
                                              lambda _b: open_folder(self, self.user_dir())))
         game.add(self.user_row)
-        self.language_row = combo_row(tr("Game language"), None, LANGUAGES, self.settings["language"])
+        self.language_row = combo_row(tr("Game language"),
+                                      tr("The languages this build of the game has (CUSA13795, the Americas). "
+                                         "Spain's Spanish is not in it"),
+                                      LANGUAGES, self.settings["language"])
         game.add(self.language_row)
         page.add(game)
 
         controls = Adw.PreferencesGroup(title=tr("Controller"),
-                                        description=tr("Any connected gamepad plus the keyboard; the one used last takes over. "
+                                        description=tr("The keyboard always works too. "
                                                        "Split-screen ports are assigned in the in-game menu (Insert / L3+R3)."))
-        pads = connected_gamepads()
-        choices = [(tr("First connected"), "")] + [(name, guid) for guid, name in pads]
-        if self.settings["gamepad"] and self.settings["gamepad"] not in [g for g, _ in pads]:
-            choices.append((tr("{} (not connected)").format(self.settings["gamepad_name"] or self.settings["gamepad"]), self.settings["gamepad"]))
-        self.gamepad_row = combo_row(tr("Controller"), None, choices, self.settings["gamepad"])
+        self.gamepad_row = combo_row(tr("Controller"), None, self.gamepad_choices(), self.settings["gamepad"])
+        self.gamepad_row.add_suffix(flat_button("view-refresh-symbolic", tr("Look for controllers again"),
+                                                self.on_refresh_gamepads))
         controls.add(self.gamepad_row)
         page.add(controls)
 
-        patches = Adw.PreferencesGroup(title=tr("Game patches"),
-                                       description=tr("From patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), applied at start; "
-                                                      "also in the in-game menu"))
-        self.patch_rows = {}
-        for key, label, note in PATCHES:
-            row = Adw.SwitchRow(title=tr(label), subtitle=tr(note), active=self.ini.get(key) == "1")
-            patches.add(row)
-            self.patch_rows[key] = row
-        page.add(patches)
+        self.build_patches(page)
+        self.build_dlc(page)
 
         performance = Adw.PreferencesGroup(title=tr("Performance"))
-        self.fps_limit_row = combo_row(tr("FPS limit"), tr("With the 60 FPS patch the game runs as fast as the PC allows"),
+        self.fps_limit_row = combo_row(tr("FPS limit"),
+                                       tr("With the 60 FPS patch the game runs as fast as the PC allows. On a 144 Hz "
+                                          "screen without G-Sync/FreeSync, 72 divides the refresh evenly"),
                                        FPS_LIMITS, self.ini.get("fps_limit", "60"))
         performance.add(self.fps_limit_row)
         self.async_row = Adw.SwitchRow(title=tr("Compile shaders in the background (experimental)"),
@@ -346,9 +391,10 @@ class LauncherWindow(Adw.ApplicationWindow):
 
         screen = Adw.PreferencesGroup(title=tr("Display"))
         self.render_res_row = combo_row(tr("Internal resolution"),
-                                        tr("The size the game draws its 3D scene at. Above 1080p the picture is output at 4K "
-                                           "(the game's PS4 Pro path, turned on by itself); 720p and 480p help low-end PCs. "
-                                           "Needs a restart"),
+                                        tr("The size the game draws its 3D scene at. Above 1080p it uses the game's PS4 Pro "
+                                           "path (turned on automatically) and the picture is output at 4K: on a 1080p screen "
+                                           "that removes jagged edges. 4K needs a strong GPU; 720p and 480p help low-end PCs "
+                                           "(the picture is output at 1080p)"),
                                         RENDER_RESOLUTIONS, self.ini.get("render_res", "1080"))
         screen.add(self.render_res_row)
         temporal = self.ini.get("temporal")
@@ -366,12 +412,17 @@ class LauncherWindow(Adw.ApplicationWindow):
                                       UPSCALERS, temporal)
         screen.add(self.upscaler_row)
         self.dlss_quality_row = combo_row(tr("DLSS quality"),
-                                          tr("Auto uses the internal resolution; the others draw the scene at NVIDIA's share of the DLSS output"),
+                                          tr("Auto uses the internal resolution. The others draw the scene at NVIDIA's share "
+                                             "of the DLSS output: Quality 67%, Balanced 58%, Performance 50%, "
+                                             "Ultra Performance 33%, DLAA 100%"),
                                           DLSS_QUALITIES, self.ini.get("dlss_quality", "auto"))
         screen.add(self.dlss_quality_row)
         self.dlss_output_row = combo_row(tr("DLSS output"), None, DLSS_OUTPUTS, self.ini.get("dlss_output", "1080"))
         screen.add(self.dlss_output_row)
-        self.dlss_model_row = combo_row(tr("DLSS model"), None, DLSS_MODELS, self.ini.get("dlss_model", "transformer"))
+        self.dlss_model_row = combo_row(tr("DLSS model"),
+                                        tr("Transformer: NVIDIA's current model (DLSS 4), sharper and steadier, a little "
+                                           "heavier. CNN: the older model, lighter"),
+                                        DLSS_MODELS, self.ini.get("dlss_model", "transformer"))
         screen.add(self.dlss_model_row)
         try:
             sharpness = float(self.ini.get("fsr3_sharpness", "0.30"))
@@ -393,6 +444,12 @@ class LauncherWindow(Adw.ApplicationWindow):
         screen.add(self.present_row)
         self.fps_row = Adw.SwitchRow(title=tr("FPS counter in the corner"), active=self.ini.get("show_fps") == "1")
         screen.add(self.fps_row)
+        displays = [(tr("Primary"), "")] + [(label, value) for value, label in connected_displays()]
+        if self.settings["display"] and self.settings["display"] not in [v for _, v in displays]:
+            displays.append((tr("{} (not connected)").format(self.settings["display"]), self.settings["display"]))
+        self.display_row = combo_row(tr("Monitor"), tr("The screen the game window and fullscreen go to"),
+                                     displays, self.settings["display"])
+        screen.add(self.display_row)
         page.add(screen)
 
         dev = Adw.PreferencesGroup(title=tr("Developer"))
@@ -438,6 +495,103 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.dlss_output_row.set_visible(dlss_sized)
         self.fsr3_sharpness_row.set_visible(upscaler == "fsr3")
         self.render_res_row.set_sensitive(not dlss_sized)
+
+    def gamepad_choices(self, pads=None):
+        pads = connected_gamepads() if pads is None else pads
+        choices = [(tr("First connected"), "")] + [(name, guid) for guid, name in pads]
+        if self.settings["gamepad"] and self.settings["gamepad"] not in [g for g, _ in pads]:
+            choices.append((tr("{} (not connected)").format(self.settings["gamepad_name"] or self.settings["gamepad"]), self.settings["gamepad"]))
+        return choices
+
+    def on_refresh_gamepads(self, _button):
+        self.settings["gamepad"] = combo_value(self.gamepad_row)
+        self.settings["gamepad_name"] = self.gamepad_row.get_selected_item().get_string() if self.settings["gamepad"] else ""
+        pads = connected_gamepads()
+        choices = self.gamepad_choices(pads)
+        self.gamepad_row.set_model(Gtk.StringList.new([tr(label) for label, _ in choices]))
+        self.gamepad_row.values = [value for _, value in choices]
+        current = self.settings["gamepad"]
+        self.gamepad_row.set_selected(self.gamepad_row.values.index(current) if current in self.gamepad_row.values else 0)
+        self.toasts.add_toast(Adw.Toast(title=tr("Controllers found: {}").format(len(pads))))
+
+    def build_patches(self, page):
+        """Every patch for this game version in the patches folder, as the Windows launcher's
+        Patches tab: menu patches on their bbport.ini key, the others in patches.json."""
+        group = Adw.PreferencesGroup(title=tr("Game patches"),
+                                     description=tr("Applied when the game starts (or with the in-game menu's \"Apply and restart\"). "
+                                                    "shadPS4-format .xml files in the patches folder for CUSA13795 01.21 are listed"))
+        self.patch_rows = {}
+        self.patches_config = load_patches_config()
+        found = game_patches.external_patches(PATCHES_DIR)
+        if not found:
+            group.add(Adw.ActionRow(title=tr("No patches in the patches folder")))
+        for key, _path, meta in found:
+            if key in HIDDEN_PATCHES:
+                continue
+            ini_key = PATCH_INI_KEYS.get(key)
+            if ini_key:
+                on = self.ini.get(ini_key) == "1"
+            else:
+                on = key in self.patches_config["enabled"] or (
+                    key not in self.patches_config["disabled"] and meta.get("isEnabled", "false").lower() == "true")
+            byline = " ".join(part for part in (tr("by {}").format(meta.get("Author")) if meta.get("Author") else "",
+                                                f"v{meta.get('PatchVer')}" if meta.get("PatchVer") else "") if part)
+            subtitle = " · ".join(part for part in (byline, meta.get("Note", "")) if part)
+            row = Adw.SwitchRow(title=meta.get("Name", key), subtitle=subtitle, active=on)
+            row.set_tooltip_text(key)
+            group.add(row)
+            self.patch_rows[key] = (row, ini_key, meta.get("isEnabled", "false").lower() == "true")
+        page.add(group)
+
+    def store_patches(self):
+        enabled, disabled = self.patches_config["enabled"], self.patches_config["disabled"]
+        changed = False
+        for key, (row, ini_key, default_on) in self.patch_rows.items():
+            on = row.get_active()
+            if ini_key:
+                self.ini[ini_key] = "1" if on else "0"
+                continue
+            was = (key in enabled, key in disabled)
+            for listing in (enabled, disabled):
+                while key in listing:
+                    listing.remove(key)
+            if on and not default_on:
+                enabled.append(key)
+            elif not on and default_on:
+                disabled.append(key)
+            changed |= was != (key in enabled, key in disabled)
+        if changed:
+            try:
+                patches_config_path().parent.mkdir(parents=True, exist_ok=True)
+                patches_config_path().write_text(json.dumps(self.patches_config, indent=2) + "\n")
+            except OSError as error:
+                self.toasts.add_toast(Adw.Toast(title=tr("Could not write {}: {}").format(patches_config_path(), error)))
+
+    def build_dlc(self, page):
+        """The player's DLC packages (.pkg) in the dlc folder, as the Windows launcher's DLC tab:
+        all of them on or off (BB_DLC) and each one (BB_DLC_DISABLED, by label)."""
+        group = Adw.PreferencesGroup(title=tr("DLC"),
+                                     description=tr("Your own DLC packages (.pkg) for CUSA13795, copied into the dlc folder; "
+                                                    "applied when you press Play"))
+        group.set_header_suffix(flat_button("folder-symbolic", tr("Open the dlc folder"),
+                                            lambda _b: open_folder(self, dlc_dir())))
+        self.dlc_row = Adw.SwitchRow(title=tr("Load DLC"), active=self.settings["dlc"])
+        group.add(self.dlc_row)
+        disabled = {x.strip() for x in self.settings["dlc_disabled"].split(",") if x.strip()}
+        self.dlc_rows = {}
+        try:
+            addons = content_profile.find_addons(dlc_dir(), "CUSA13795")
+        except (OSError, ValueError):
+            addons = []
+        for label, title, source in addons:
+            row = Adw.SwitchRow(title=title, subtitle=f"{label} · {source}", active=label not in disabled)
+            self.dlc_row.bind_property("active", row, "sensitive", GObject.BindingFlags.SYNC_CREATE)
+            group.add(row)
+            self.dlc_rows[label] = row
+        if not addons:
+            self.dlc_row.set_subtitle(tr("No DLC in {}").format(dlc_dir()))
+        self.dlc_known_disabled = disabled - set(self.dlc_rows)
+        page.add(group)
 
     def game_dir(self):
         return Path(self.settings["game_dir"]).expanduser()
@@ -509,6 +663,10 @@ class LauncherWindow(Adw.ApplicationWindow):
         s["gamepad_name"] = self.gamepad_row.get_selected_item().get_string() if s["gamepad"] else ""
         s["fullscreen"] = self.fullscreen_row.get_active()
         s["present_mode"] = combo_value(self.present_row)
+        s["display"] = combo_value(self.display_row)
+        s["dlc"] = self.dlc_row.get_active()
+        s["dlc_disabled"] = ",".join(sorted(self.dlc_known_disabled | {
+            label for label, row in self.dlc_rows.items() if not row.get_active()}))
         s["mangohud"] = self.mangohud_row.get_active()
         s["frame_stats"] = self.stats_row.get_active()
         s["save_log"] = self.save_log_row.get_active()
@@ -517,8 +675,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         s["extra_env"] = self.env_row.get_text()
         s["ui_language"] = combo_value(self.ui_language_row)
         save_settings(s)
-        for key, row in self.patch_rows.items():
-            self.ini[key] = "1" if row.get_active() else "0"
+        self.store_patches()
         self.ini["show_fps"] = "1" if self.fps_row.get_active() else "0"
         self.ini["fullscreen"] = "1" if self.fullscreen_row.get_active() else "0"
         self.ini["fps_limit"] = combo_value(self.fps_limit_row)
@@ -636,7 +793,8 @@ class LauncherWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=tr("No Steam user folder found (userdata)"), timeout=6))
             return
         exe, start_dir, options = steam_shortcuts.launcher_command()
-        entry = steam_shortcuts.make_entry(exe, start_dir, launch_options=options)
+        icon = game_icon_path() if install_game_icon(self.settings["game_dir"]) else ""
+        entry = steam_shortcuts.make_entry(exe, start_dir, launch_options=options, icon=str(icon))
         added = replaced = 0
         for path in files:
             try:
@@ -734,8 +892,10 @@ class LauncherWindow(Adw.ApplicationWindow):
 
 class LauncherApp(Adw.Application):
     def __init__(self):
+        # NON_UNIQUE: another SacredFire launcher already running (an older AppImage or checkout,
+        # same application id) would otherwise be raised instead of this one opening.
         super().__init__(application_id=APP_ID,
-                         flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+                         flags=Gio.ApplicationFlags.NON_UNIQUE)
 
     def do_activate(self):
         window = self.get_active_window() or LauncherWindow(self)
